@@ -227,7 +227,7 @@ export class BackgroundTasksManager implements Component {
   private refreshTimer: NodeJS.Timeout;
 
   constructor(
-    private readonly tui: Pick<TUI, 'requestRender'>,
+    private readonly tui: Pick<TUI, 'requestRender' | 'terminal'>,
     private readonly theme: TaskManagerTheme,
     private readonly done: (result: TaskManagerResult) => void,
     private readonly options: TaskManagerOptions,
@@ -373,11 +373,11 @@ export class BackgroundTasksManager implements Component {
       return;
     }
     if (matchesKey(data, 'pageUp')) {
-      this.scrollDetail(-DETAIL_VISIBLE_OUTPUT_LINES);
+      this.scrollDetail(-this.detailOutputLines());
       return;
     }
     if (matchesKey(data, 'pageDown')) {
-      this.scrollDetail(DETAIL_VISIBLE_OUTPUT_LINES);
+      this.scrollDetail(this.detailOutputLines());
       return;
     }
     if (data === 'r') {
@@ -510,7 +510,7 @@ export class BackgroundTasksManager implements Component {
 
   /** Scroll the detail output window. Scrolling up pauses the live tail; reaching the bottom resumes it. */
   private scrollDetail(delta: number): void {
-    const maxTop = Math.max(0, this.detailLines.length - DETAIL_VISIBLE_OUTPUT_LINES);
+    const maxTop = Math.max(0, this.detailLines.length - this.detailOutputLines());
     if (maxTop === 0) return;
     if (this.detailFollow) {
       this.detailFollow = false;
@@ -737,6 +737,18 @@ export class BackgroundTasksManager implements Component {
     return this.frame(`bg: ${truncateChars(name, 64)}`, subtitle, body, footer, width);
   }
 
+  /**
+   * Number of output-tail rows that keep the whole detail box within the
+   * terminal height. Detail box = frame(7) + field rows(13) + output box(N + 3),
+   * and the 1-row bottom margin must stay visible.
+   */
+  private detailOutputLines(): number {
+    const rows = this.tui.terminal.rows;
+    if (!Number.isFinite(rows) || rows <= 0) return DETAIL_VISIBLE_OUTPUT_LINES;
+    const budget = rows - 1 - 23;
+    return Math.max(4, Math.min(DETAIL_VISIBLE_OUTPUT_LINES, budget));
+  }
+
   private renderOutputBox(width: number): string[] {
     const inner = Math.max(1, width - 2);
     const top = ` ${blueBorder(`╭${'─'.repeat(inner)}╮`)}`;
@@ -749,12 +761,13 @@ export class BackgroundTasksManager implements Component {
     } else if (this.detailLines.length === 0) {
       lines.push(row(this.theme.fg('dim', 'No output yet')));
     } else {
-      const maxTop = Math.max(0, this.detailLines.length - DETAIL_VISIBLE_OUTPUT_LINES);
+      const visible = this.detailOutputLines();
+      const maxTop = Math.max(0, this.detailLines.length - visible);
       const start = this.detailFollow ? maxTop : Math.min(this.detailScrollTop, maxTop);
-      const windowLines = this.detailLines.slice(start, start + DETAIL_VISIBLE_OUTPUT_LINES);
+      const windowLines = this.detailLines.slice(start, start + visible);
       for (const line of windowLines) lines.push(row(this.theme.fg('toolOutput', line)));
     }
-    while (lines.length < DETAIL_VISIBLE_OUTPUT_LINES + 1) lines.push(row());
+    while (lines.length < this.detailOutputLines() + 1) lines.push(row());
     lines.push(bottom);
     lines.push(` ${this.theme.fg('dim', this.outputStatusLine())}`);
     return lines;
@@ -763,9 +776,10 @@ export class BackgroundTasksManager implements Component {
   private outputStatusLine(): string {
     const total = this.detailLines.length;
     if (!this.detailFollow && total > 0) {
-      const maxTop = Math.max(0, total - DETAIL_VISIBLE_OUTPUT_LINES);
+      const visible = this.detailOutputLines();
+      const maxTop = Math.max(0, total - visible);
       const start = Math.min(this.detailScrollTop, maxTop);
-      const end = Math.min(total, start + DETAIL_VISIBLE_OUTPUT_LINES);
+      const end = Math.min(total, start + visible);
       return `lines ${formatCount(start + 1)}\u2013${formatCount(end)} of ${formatCount(total)} · ↑/↓ PgUp/PgDn scroll · ↓ at bottom follows`;
     }
     const suffix = this.tailTruncated ? ` of ${formatSize(this.tailTotalBytes)}` : '';
